@@ -1,4 +1,4 @@
-#  Copyright 2021 Melissa Belvadi Open Source License CC-BY-NC-SA granted
+#  Copyright 2022 Melissa Belvadi Open Source License CC-BY-NC-SA granted
 # Input a TR_B* Project COUNTER file (or any file that has a tab-delimited structure with a column of ISBNs)
 # and either output a file with four tsv columns:
 # the original ISBN from the input file,
@@ -16,6 +16,11 @@
 # If any ISBN is missing from a non-header row, or is invalid (can't be fixed with isbnlib cleanup attempts), the line is reported to the error log.
 #    If the option was chosen for the output not to repeat the original line data, there is no line written to the output file; if the option was
 #    chosen to repeat all of the original line data, that line is written to the output file with two empty new columns added
+# The program checks for a local sqlite3 database file first called isbn_lc.db and creates it empty if it
+#   doesn't find it, and if it does, will search it first so the program won't keep hitting the remote servers
+#   every time for call numbers the user has previously found.
+#  It will then save any that it gets from the remote servers into that file for checking the next time.
+#  It looks for that sqlite file in the same working directory as the data file.
 
 import tkinter
 from tkinter import *
@@ -38,6 +43,8 @@ from bs4 import BeautifulSoup
 import sruthi
 import threading
 import sys
+import sqlite3
+
 
 UA = 'isbnlib (gzip)'
 myheaders = {'User-Agent': UA}
@@ -50,8 +57,86 @@ UA_harv = 'mbelvadi@gmail.com'
 SERVICE1 = 'harv'
 jsondata = bibformatters['json']
 
+sqlitefile = 'isbn_lc.db'
+table_columns = {"ISBN": "text", "LC": "text", "LCSource": "text"}
 
 LOC_Base = 'http://lx2.loc.gov:210/LCDB?'
+
+def sqlite_search(dbfile,isbn):
+    try:
+        conn = sqlite3.connect(dbfile)
+        c = conn.cursor()
+    except:
+        infologger.error(f'Unable to open sqlite file: {dbfile}')
+        return None
+    select_field_list_string = "DISTINCT ISBN, LC, LCSource"
+    from_string = "main"
+    where_string = f"ISBN like '{isbn}';"
+    sql_string = "SELECT {} from {} WHERE {}".format(select_field_list_string, from_string, where_string)
+    try:
+        c.execute(sql_string)
+    except:
+        infologger.debug(f'{isbn} not found in {dbfile}')
+        conn.close()
+        return None
+    else:
+        entry = c.fetchall()
+    conn.close()
+    if entry is None or len(entry) == 0:
+        return None
+    else:
+        return entry[0]
+
+def sqlite_create(dbfile):
+    conn = sqlite3.connect(dbfile)
+    c = conn.cursor()
+    sql_tablecreate(c,'main',**table_columns)
+    conn.commit()
+    conn.close()
+    return None
+
+def sql_tablecreate(sqlc, table_name, **kwargs):
+    """ Parameters: cursor, table name, **kwargs are dict of fieldnames and data types """
+    create_string = "CREATE TABLE IF NOT EXISTS {} (".format(table_name)
+    for fieldname, sql_type in kwargs.items():
+        create_string = create_string + fieldname + " " + sql_type + ","
+    final_string = create_string.rstrip(",") + ")"
+    infologger.debug("Tablecreate finalstring: {}".format(final_string))
+    try:
+        sqlc.execute("{}".format(final_string))
+        return True
+    except sqlite3.Error as es:
+        infologger.debug("Tablecreate Error: {}".format(es))
+        return False
+    except Exception as es2:
+        infologger.debug("Tablecreate Exception: {}".format(es2))
+        return False
+
+def sql_tableinsert(sqlcconn,table_name, **kwargs):
+    """Given a cursor and table name and dict list of column names and values, insert a single row with the provided data"""
+    insert_string = "INSERT OR IGNORE INTO {} VALUES (".format(table_name)
+    format_string = ''
+    try:
+        _ = len(kwargs.values())
+    except Exception as etf:
+        infologger.error("TbleInsert no fields in kwargs Exception: {}".format(etf))
+        return False
+    for fieldvalue in kwargs.values():
+        if fieldvalue.find("'") != -1:
+            fieldvalue = re.sub("'","''",fieldvalue)
+        format_string = format_string + "'" + fieldvalue + "',"
+    format_string = format_string.rstrip(",") + ')'
+    final_string = insert_string + format_string
+    try:
+        sqlcconn.execute(final_string)
+        sqlcconn.execute("SELECT * from {} limit 5".format(table_name))
+        return True
+    except sqlite3.Error as eti:
+        infologger.error("TableInsert Error: {} {}".format(eti,final_string))
+        return False
+    except Exception as eti2:
+        infologger.error("TbleInsert Exception: {}".format(eti2))
+        return False
 
 
 def alma_search(inst_code,isbn):
@@ -476,6 +561,10 @@ if __name__ == '__main__':
     infohandler.setFormatter(infoformatter)  # Pass handler as a parameter, not assign
     infologger.addHandler(infohandler)
     outfile = dirname + os.sep + "LCC_"+basename
+    sqllite_fullpath = dirname+os.sep+sqlitefile
+    if not os.path.exists(sqllite_fullpath):
+        sqlite_create(sqllite_fullpath)
+
     with open(datafile, newline='', encoding='utf-8') as f, open(outfile, 'w', encoding="utf-8",errors="ignore",newline='') as result:
         reader = csv.reader(f, delimiter='\t', quoting=csv.QUOTE_NONE)
         if lineskip > 0:
@@ -518,10 +607,16 @@ if __name__ == '__main__':
                             writer.writerow(row+ ['',''])
                             result.flush()
                             continue
-                    else:  # try to get LCC from OCLC Classify
-                        lcc = get_oclc_data('isbn',fixed_isbn)
-                        if lcc:
-                            source = 'OCLC'
+                    else:  # try first to see if we already have this isbn's LCC in sqlite file
+                        sql_entry = None
+                        sql_entry = sqlite_search(sqllite_fullpath,fixed_isbn)
+                        if sql_entry:
+                            lcc = sql_entry[1]
+                            source = sql_entry[2]
+                        if not lcc: # try to get LCC from OCLC Classify
+                            lcc = get_oclc_data('isbn',fixed_isbn)
+                            if lcc:
+                                source = 'OCLC'
                         if not lcc:  # try to get LCC from Harvard
                             lcc = harvard_get(fixed_isbn)
                             if lcc:
@@ -587,6 +682,21 @@ if __name__ == '__main__':
                             newdata = (original_isbn, "", fixed_isbn, "NOTFOUND")
                         writer.writerow(newdata)
                         result.flush()
+                        if lcc and not sql_entry:  #found an LCC from one of the remote servers, add to sqlite
+                            newdata_dict = {"ISBN": fixed_isbn, "LC": lcc, "LCSource": source}
+                            try:
+                                conni = sqlite3.connect(sqllite_fullpath)
+                                ci = conni.cursor()
+                            except Exception as cie:
+                                infologger.error(f'Unable to open {sqllite_fullpath} to add new data {str(newdata_dict)} due to {cie} ')
+                            else:
+                                try:
+                                    sql_tableinsert(ci, 'main', **newdata_dict)
+                                    conni.commit()
+                                except Exception as cie2:
+                                    infologger.error(
+                                        f'Unable to save new data {str(newdata_dict)} to {sqllite_fullpath} due to {cie2}')
+                                conni.close()
                         if not lcc:
                             infologger.error(f"Unable to find LCC for: {original_isbn} (fixed as: {fixed_isbn})")
 
