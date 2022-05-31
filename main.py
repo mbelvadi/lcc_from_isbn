@@ -1,4 +1,4 @@
-#  Copyright 2022 Melissa Belvadi Open Source License CC-BY-NC-SA granted
+#  Copyright 2021 Melissa Belvadi Open Source License CC-BY-NC-SA granted
 # Input a TR_B* Project COUNTER file (or any file that has a tab-delimited structure with a column of ISBNs)
 # and either output a file with four tsv columns:
 # the original ISBN from the input file,
@@ -53,7 +53,7 @@ base = 'http://classify.oclc.org/classify2/Classify?'
 summaryBase = '&summary=true'
 summaryInd = 'false'
 
-UA_harv = 'mbelvadi@gmail.com'
+UA_harv = 'noreply@nobody.com'
 SERVICE1 = 'harv'
 jsondata = bibformatters['json']
 
@@ -472,7 +472,7 @@ if __name__ == '__main__':
     SpaceLabel3 = tkinter.Label(window,text="  --------------  ")
     SpaceLabel3.grid(column=0, row=16, sticky='W', padx=(15,1))
 
-    colchoice_top_label = tkinter.Label(window, text='3. Column # that has ISBN (use 6 for COUNTER views):')
+    colchoice_top_label = tkinter.Label(window, text='3. Column # that has ISBN (use 7 for COUNTER views):')
     colchoice_top_label.grid(column=0, row=17, sticky='W', padx=(15,1))
     colchoicevar.set(1)
     colchoicespin = Spinbox(window, from_=1, to=50, width=5, textvariable=colchoicevar)
