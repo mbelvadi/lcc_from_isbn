@@ -367,6 +367,11 @@ def harvard_get(m_isbn):
     except:
         infologger.error(f'Error getting record_data from Harvard {m_isbn}')
         return None
+    try:
+        _ = record_data['items']
+    except:
+        infologger.error(f'Error getting record_data from Harvard {m_isbn}')
+        return None
     if record_data['items']:
         if "mods" in record_data['items']:
             record_data = record_data['items']['mods']
